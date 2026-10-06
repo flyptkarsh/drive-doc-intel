@@ -1,24 +1,19 @@
-import { NextResponse } from "next/server";
-import { handler } from "@/lib/api";
-import { db } from "@/lib/db";
-import { isSignInAllowed } from "@/lib/env";
-import { verifyIdToken } from "@/lib/google";
-import { createSession } from "@/lib/session";
+import { z } from "zod";
+import { env, isSignInAllowed } from "@/server/env";
+import { verifyIdToken } from "@/server/google";
+import { HttpError, ok, readJson, route } from "@/server/http";
+import { upsertGoogleUser } from "@/server/queries/users";
+import { createSession } from "@/server/session";
 
-// Receives the ID token credential from Google One Tap / the Sign in with Google button.
-export const POST = handler(async (req: Request) => {
-  const { credential } = (await req.json()) as { credential?: string };
-  if (!credential) return NextResponse.json({ error: "Missing credential" }, { status: 400 });
+const Body = z.object({ credential: z.string().min(1) });
+
+/** Exchanges a Google One Tap / Sign in with Google credential for a session. */
+export const POST = route(async (req) => {
+  const { credential } = await readJson(req, Body);
   const profile = await verifyIdToken(credential);
-  if (!isSignInAllowed(profile.email!)) {
-    return NextResponse.json({ error: "This Google account isn't allowed to sign in." }, { status: 403 });
+  if (!isSignInAllowed(profile.email, env.allowedSignIns)) {
+    throw new HttpError(403, "This Google account isn't allowed to sign in.");
   }
-  const sql = await db();
-  const [user] = await sql<{ id: string }[]>`
-    insert into users (google_sub, email, name, picture)
-    values (${profile.sub}, ${profile.email!}, ${profile.name ?? null}, ${profile.picture ?? null})
-    on conflict (google_sub) do update set email = excluded.email, name = excluded.name, picture = excluded.picture
-    returning id`;
-  await createSession(user.id);
-  return NextResponse.json({ ok: true });
+  await createSession(await upsertGoogleUser(profile));
+  return ok();
 });

@@ -1,22 +1,16 @@
-import { NextResponse } from "next/server";
-import { handler } from "@/lib/api";
-import { db } from "@/lib/db";
-import { requireUser } from "@/lib/session";
-import { syncUser } from "@/lib/sync";
+import { after } from "next/server";
+import { z } from "zod";
+import { authedRoute, badRequest, ok, readJson } from "@/server/http";
+import { getConnection, setFolder } from "@/server/queries/connections";
+import { syncUser } from "@/server/sync";
 
-// Points the connection at a folder. Switching folders clears previously ingested documents.
-export const POST = handler(async (req: Request) => {
-  const user = await requireUser();
-  const { id, name } = (await req.json()) as { id?: string; name?: string };
-  if (!id) return NextResponse.json({ error: "Missing folder id" }, { status: 400 });
-  const sql = await db();
-  const [prev] = await sql<{ folder_id: string | null }[]>`
-    select folder_id from drive_connections where user_id = ${user.id}`;
-  if (!prev) return NextResponse.json({ error: "Drive not connected" }, { status: 400 });
-  if (prev.folder_id !== id) {
-    await sql`delete from documents where user_id = ${user.id}`;
-  }
-  await sql`update drive_connections set folder_id = ${id}, folder_name = ${name ?? null}, last_sync_error = null where user_id = ${user.id}`;
-  void syncUser(user.id).catch(() => {});
-  return NextResponse.json({ ok: true });
+const Body = z.object({ id: z.string().min(1), name: z.string().nullish() });
+
+/** Sets the folder to watch and starts the first sync. */
+export const POST = authedRoute(async (req, user) => {
+  const { id, name } = await readJson(req, Body);
+  if (!(await getConnection(user.id))) throw badRequest("Google Drive isn't connected.");
+  await setFolder(user.id, id, name ?? null);
+  after(() => syncUser(user.id).catch(() => {}));
+  return ok();
 });

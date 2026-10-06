@@ -1,6 +1,11 @@
 // Minimal typings for the Google Identity Services script (accounts.google.com/gsi/client).
 type GoogleCredentialResponse = { credential: string; select_by?: string };
-type GoogleCodeResponse = { code?: string; scope?: string; error?: string; error_description?: string };
+type GoogleCodeResponse = {
+  code?: string;
+  scope?: string;
+  error?: string;
+  error_description?: string;
+};
 
 interface Window {
   google?: {

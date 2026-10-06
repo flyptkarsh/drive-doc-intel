@@ -1,11 +1,9 @@
-import { NextResponse } from "next/server";
-import { handler } from "@/lib/api";
-import { requireUser } from "@/lib/session";
-import { syncUser } from "@/lib/sync";
+import { after } from "next/server";
+import { authedRoute, ok } from "@/server/http";
+import { syncUser } from "@/server/sync";
 
-// Starts a sync in the background; the dashboard polls /api/status for progress.
-export const POST = handler(async () => {
-  const user = await requireUser();
-  void syncUser(user.id).catch(() => {});
-  return NextResponse.json({ ok: true });
+/** Starts a sync in the background; the dashboard polls /api/status for progress. */
+export const POST = authedRoute(async (_req, user) => {
+  after(() => syncUser(user.id).catch(() => {}));
+  return ok();
 });

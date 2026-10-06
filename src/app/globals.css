@@ -128,3 +128,28 @@
     @apply font-sans;
   }
 }
+/* Rendered Markdown in Ask answers */
+@layer components {
+  .markdown p {
+    @apply my-2;
+  }
+  .markdown strong {
+    @apply font-semibold;
+  }
+  .markdown ul {
+    @apply list-disc pl-5;
+  }
+  .markdown ol {
+    @apply list-decimal pl-5;
+  }
+  .markdown table {
+    @apply my-2 w-full text-xs;
+  }
+  .markdown th,
+  .markdown td {
+    @apply border px-2 py-1 text-left;
+  }
+  .markdown code {
+    @apply rounded bg-muted px-1 font-mono text-xs;
+  }
+}

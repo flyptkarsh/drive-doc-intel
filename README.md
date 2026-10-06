@@ -4,7 +4,7 @@
 > messy financial documents, and get structured performance data you can browse, filter and question.
 
 **Live demo:** https://drive-doc-intel.onrender.com
-**Stack:** Next.js 16 (App Router, TypeScript) · shadcn/ui · PostgreSQL · Claude API · Google Identity Services · Render
+**Stack:** Next.js 16 (App Router, TypeScript) · shadcn/ui · SWR · PostgreSQL · Claude API · Google Identity Services · Vitest · Render
 
 ---
 
@@ -37,24 +37,24 @@
      **monthly grid** with funds as rows and months as columns.
    - **Documents:** full-text search, the status of each file, a detail view with everything extracted,
      the raw JSON, and a "Re-extract" button.
-   - **Ask:** plain-English questions such as *"Which fund had the best January return?"*, answered from
+   - **Ask:** plain-English questions such as _"Which fund had the best January return?"_, answered from
      the database. Each answer shows the SQL that was run and links to the source documents.
 5. **Automatic sync.** The server re-checks the folder every 60 seconds. New files are processed,
    changed files are re-processed, and deleted files are removed.
 
 ## Requirements coverage
 
-| Requirement | How it is met |
-| --- | --- |
-| Connect Google Drive with OAuth | Google Identity Services code flow (popup) → the server exchanges the code for a refresh token, which is stored encrypted. Scope: `drive.readonly`. |
-| Watch a chosen folder | Folder picker (browse or search). The folder is listed recursively, up to 3 levels deep. |
-| PDFs, HTML emails, CSVs | PDFs go to Claude as native document blocks, so it sees layout and tables. HTML and `.eml` files are converted to text with table rows kept intact, and PDFs attached to emails are included. CSVs are sent as-is. Google Docs are exported as PDF, Google Sheets as CSV. |
-| Use LLMs to extract structured data | Claude structured outputs (`output_config.format`) with a Zod schema, so every response is parsed and validated against the schema. |
-| Each document looks different, with no per-document parser | There is one schema and one prompt for every document. The prompt covers the variation directly: return grids, trailing versus calendar periods, `(0.8%)` as a negative number, net versus gross, and annualized returns. |
-| Store results in a database | PostgreSQL: `documents`, `funds`, `performance`, `metrics`, plus the raw extraction kept as JSONB. |
-| Browse, search and query everything | Filterable tables, Postgres full-text search, and a Claude Q&A agent that can run read-only SQL. |
-| "Which fund had the best January return?" | The Ask agent runs SQL such as `... where extract(month from period_end) = 1 order by return_pct desc`, then explains the answer and cites its sources. |
-| New files processed automatically | A poller inside the server diffs Drive against the database using md5 checksums or modified times. A "Sync now" button and a `POST /api/cron/sync` endpoint for external schedulers are also available. |
+| Requirement                                                | How it is met                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect Google Drive with OAuth                            | Google Identity Services code flow (popup) → the server exchanges the code for a refresh token, which is stored encrypted. Scope: `drive.readonly`.                                                                                                                       |
+| Watch a chosen folder                                      | Folder picker (browse or search). The folder is listed recursively, up to 3 levels deep.                                                                                                                                                                                  |
+| PDFs, HTML emails, CSVs                                    | PDFs go to Claude as native document blocks, so it sees layout and tables. HTML and `.eml` files are converted to text with table rows kept intact, and PDFs attached to emails are included. CSVs are sent as-is. Google Docs are exported as PDF, Google Sheets as CSV. |
+| Use LLMs to extract structured data                        | Claude structured outputs (`output_config.format`) with a Zod schema, so every response is parsed and validated against the schema.                                                                                                                                       |
+| Each document looks different, with no per-document parser | There is one schema and one prompt for every document. The prompt covers the variation directly: return grids, trailing versus calendar periods, `(0.8%)` as a negative number, net versus gross, and annualized returns.                                                 |
+| Store results in a database                                | PostgreSQL: `documents`, `funds`, `performance`, `metrics`, plus the raw extraction kept as JSONB.                                                                                                                                                                        |
+| Browse, search and query everything                        | Filterable tables, Postgres full-text search, and a Claude Q&A agent that can run read-only SQL.                                                                                                                                                                          |
+| "Which fund had the best January return?"                  | The Ask agent runs SQL such as `... where extract(month from period_end) = 1 order by return_pct desc`, then explains the answer and cites its sources.                                                                                                                   |
+| New files processed automatically                          | A poller inside the server diffs Drive against the database using md5 checksums or modified times. A "Sync now" button and a `POST /api/cron/sync` endpoint for external schedulers are also available.                                                                   |
 
 ## Architecture
 
@@ -112,7 +112,7 @@ for each pending file (3 at a time):
 **Let the model handle layout, and keep the schema strict.**
 Writing a parser for each manager's format doesn't scale, and the brief says it shouldn't be needed.
 Every document goes through one prompt and one Zod schema
-([`src/lib/extract.ts`](src/lib/extract.ts)), and structured outputs guarantee the response matches it.
+([`src/server/extraction/schema.ts`](src/server/extraction/schema.ts)), and structured outputs guarantee the response matches it.
 The schema is designed for querying, not for a generic summary:
 
 - Returns are stored **one row per fund, share class and period**, with a `period_type` enum
@@ -133,7 +133,8 @@ text. The text layer is still extracted for full-text search. PDFs over 20 MB fa
 
 **Answer questions with SQL instead of RAG.** The questions in the brief ("best January return", "filter by
 fund") are about numbers and comparisons, which vector search over chunks of text handles poorly. The Ask
-agent ([`src/lib/ask.ts`](src/lib/ask.ts)) gets two tools:
+agent ([`src/server/ask/agent.ts`](src/server/ask/agent.ts)) gets two tools:
+
 - `run_sql`: read-only SQL over the extracted tables, for anything numeric.
 - `search_documents`: Postgres full-text search, for questions about the prose.
 
@@ -151,7 +152,7 @@ token, and the GIS code client requests Drive access in a popup. Using one libra
 redirect URIs to manage, and Drive access is only requested once the user decides to connect a folder.
 
 **Avoid an ORM.** The schema is small and stable, so it lives as idempotent SQL in
-[`src/lib/db.ts`](src/lib/db.ts) and is applied on first use. Queries use `postgres.js` tagged templates,
+[`src/server/schema.ts`](src/server/schema.ts) and is applied on first use. Queries use `postgres.js` tagged templates,
 which are parameterized.
 
 ## Data model
@@ -178,12 +179,12 @@ removes its data.
 - **Drive tokens:** refresh tokens are encrypted at rest with AES-256-GCM. Drive scope is read-only.
 - **Allow-list:** `ALLOWED_SIGNINS` limits sign-in to specific emails or `@domains`. This matters because
   each processed document costs Claude credits.
-- **SQL written by the model** ([`src/lib/ask.ts`](src/lib/ask.ts)) has several layers of protection:
+- **SQL written by the model** ([`src/server/ask/sql.ts`](src/server/ask/sql.ts)) has several layers of protection:
   - The query is wrapped so it can only see CTEs named `documents`, `funds`, `performance` and `metrics`,
     each **already filtered to the signed-in user** (`where user_id = $1`).
   - It runs inside a `READ ONLY` transaction with a 5-second `statement_timeout`.
-  - Statements that aren't `SELECT`/`WITH` are rejected, as are `;`, schema-qualified names, `pg_*`
-    functions, and the `users` / `drive_connections` tables.
+  - Statements that aren't `SELECT`/`WITH` are rejected, as are write and DDL keywords (even inside a
+    CTE), `;`, schema-qualified names, `pg_*` functions, and the `users` / `drive_connections` tables.
   - Results are capped at 200 rows.
 - **Isolation between users:** every route handler scopes its queries by `user_id` from the session.
 
@@ -208,23 +209,23 @@ In Google Cloud Console → APIs & Services:
    because the code flow uses the GIS popup (`postmessage`).
 3. **Enable the Google Drive API.**
 4. **OAuth consent screen → Data access:** add `https://www.googleapis.com/auth/drive.readonly`.
-   An *Internal* (Workspace-only) app needs no verification. For an *External* app in testing mode, add
+   An _Internal_ (Workspace-only) app needs no verification. For an _External_ app in testing mode, add
    yourself as a test user.
 
 ### Environment variables
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `DATABASE_URL` | ✓ | Postgres connection string |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ✓ | Google OAuth Web client |
-| `ANTHROPIC_API_KEY` | ✓ | Claude API |
-| `SESSION_SECRET` | ✓ | Signs session cookies (`openssl rand -base64 32`) |
-| `ENCRYPTION_KEY` | | Encrypts stored refresh tokens. Defaults to `SESSION_SECRET`. |
-| `ALLOWED_SIGNINS` | | Comma-separated emails / `@domains` allowed to sign in |
-| `CRON_SECRET` | | Enables `POST /api/cron/sync` with `Authorization: Bearer <secret>` |
-| `SYNC_INTERVAL_SECONDS` | | Poll interval. Default `60`. |
-| `CLAUDE_MODEL` | | Default `claude-opus-5-5` |
-| `DISABLE_POLLER` | | Set to `1` to turn off background sync (e.g. while developing the UI) |
+| Variable                                    | Required | Purpose                                                               |
+| ------------------------------------------- | -------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`                              | ✓        | Postgres connection string                                            |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ✓        | Google OAuth Web client                                               |
+| `ANTHROPIC_API_KEY`                         | ✓        | Claude API                                                            |
+| `SESSION_SECRET`                            | ✓        | Signs session cookies (`openssl rand -base64 32`)                     |
+| `ENCRYPTION_KEY`                            |          | Encrypts stored refresh tokens. Defaults to `SESSION_SECRET`.         |
+| `ALLOWED_SIGNINS`                           |          | Comma-separated emails / `@domains` allowed to sign in                |
+| `CRON_SECRET`                               |          | Enables `POST /api/cron/sync` with `Authorization: Bearer <secret>`   |
+| `SYNC_INTERVAL_SECONDS`                     |          | Poll interval. Default `60`.                                          |
+| `CLAUDE_MODEL`                              |          | Default `claude-opus-5-5`                                             |
+| `DISABLE_POLLER`                            |          | Set to `1` to turn off background sync (e.g. while developing the UI) |
 
 ### FAQ: running locally
 
@@ -282,12 +283,14 @@ Everything else is optional (see the table above). Restart `npm run dev` after e
 - If you closed the One Tap prompt several times, Google hides it for a while. The "Continue with Google"
   button below the headline always works.
 - Some browsers block One Tap when third-party cookies or FedCM are disabled. Again, use the button.
+
 </details>
 
 <details>
 <summary><b>Google says "Access blocked" or "This app isn't verified".</b></summary>
 
 The consent screen needs the `drive.readonly` scope added, and:
+
 - **Internal** app (Google Workspace): only accounts in that Workspace can sign in, and no verification
   is needed.
 - **External** app in testing mode: add your Google account under **Test users**.
@@ -317,6 +320,7 @@ Enable the **Google Drive API** in the same Google Cloud project as the OAuth cl
 - Watch the terminal running `npm run dev`. Each failure is logged with the file name.
 - Make sure the file type is supported: PDF, HTML, `.eml`, CSV, TXT, Google Docs, Google Sheets.
   Other files in the folder are ignored.
+
 </details>
 
 <details>
@@ -348,6 +352,7 @@ everything:
 ```bash
 dropdb drive_doc_intel_dev && createdb drive_doc_intel_dev
 ```
+
 </details>
 
 <details>
@@ -357,21 +362,37 @@ dropdb drive_doc_intel_dev && createdb drive_doc_intel_dev
 npm run build && npm start
 ```
 
-`npm run typecheck` and `npm run lint` run the same checks as the build.
+`npm run check` runs lint, typecheck, formatting and tests, the same as CI.
+</details>
+
+<details>
+<summary><b>How do I run the tests?</b></summary>
+
+```bash
+npm test
+```
+
+To include the Postgres integration tests, point them at a database they can write to (they create and
+clean up their own rows):
+
+```bash
+TEST_DATABASE_URL=postgres://localhost/drive_doc_intel_dev npm test
+```
+
 </details>
 
 ### Try it with the sample documents
 
 [`samples/`](samples) holds three documents that are deliberately different:
 
-| File | Format | What makes it tricky |
-| --- | --- | --- |
-| `northwind-global-equity-jan-2026.html` | HTML manager email | Returns given in a sentence and in a trailing-period table. AUM written as "USD 1.82bn". |
-| `harbor-credit-opportunities-monthly.csv` | CSV export | A title and metadata rows mixed in with the data. Monthly returns are spread across rows. NAV and fund size sit in the footer. |
-| `summit-multi-asset-statement-q4-2025.txt` | Plain-text statement | GBP. Quarterly, YTD and monthly returns in a dotted-leader layout. The benchmark only covers some periods. |
+| File                                       | Format               | What makes it tricky                                                                                                           |
+| ------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `northwind-global-equity-jan-2026.html`    | HTML manager email   | Returns given in a sentence and in a trailing-period table. AUM written as "USD 1.82bn".                                       |
+| `harbor-credit-opportunities-monthly.csv`  | CSV export           | A title and metadata rows mixed in with the data. Monthly returns are spread across rows. NAV and fund size sit in the footer. |
+| `summit-multi-asset-statement-q4-2025.txt` | Plain-text statement | GBP. Quarterly, YTD and monthly returns in a dotted-leader layout. The benchmark only covers some periods.                     |
 
 Drop these (plus any real factsheet PDFs) into the watched folder, wait for the
-"In progress" count to reach zero, and ask *"Which fund had the best January return?"*
+"In progress" count to reach zero, and ask _"Which fund had the best January return?"_
 
 ## Deploying to Render
 
@@ -387,26 +408,36 @@ to wake the service and trigger a sync.
 
 ## Testing
 
-What has been checked:
+```bash
+npm test                                   # unit tests (Vitest)
+TEST_DATABASE_URL=postgres://localhost/drive_doc_intel_dev npm test   # + Postgres integration tests
+npm run check                              # lint, typecheck, formatting and tests: what CI runs
+```
 
-- `npm run typecheck`, `npm run lint` and `npm run build` all pass.
-- Against a local Postgres:
-  - The schema applies cleanly.
-  - The scoped `run_sql` tool returns only the current user's rows; a second user's data is invisible.
-  - These are all rejected: `select * from users`, `public.performance`, `DELETE`, stacked statements,
-    `pg_sleep`.
-  - A query written as a `WITH …` subquery works.
-  - Full-text search, HTML-to-text conversion (tables kept) and the encryption round-trip all work.
-- The UI was checked in a browser with seeded data: dashboard, filters, sorting, monthly grid and
-  document detail dialog.
-- The production deploy on Render is live and the health check passes.
-- The extraction request was sent to the real Claude API with an invalid key, and came back with
-  `401 authentication_error`. That shows the streamed, schema-constrained request is built and accepted by
-  the SDK.
+**Automated** (`*.test.ts`, run in CI on every push against a Postgres 17 service):
 
-Not yet automated: an end-to-end run against the live Claude and Drive APIs. The obvious next step is a
-small **extraction eval**: a set of real factsheets with hand-labeled expected rows, scored on per-field
-precision and recall, run whenever the prompt or schema changes.
+| Area                                                                             | What's covered                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL guard ([`sql.test.ts`](src/server/ask/sql.test.ts))                          | Allowed queries pass. Writes, DDL, data-modifying CTEs, stacked statements, other tables, schema-qualified names, `pg_*` and settings functions are rejected.                                         |
+| Scoped SQL ([`sql.integration.test.ts`](src/server/ask/sql.integration.test.ts)) | Against a real Postgres: a user only sees their own rows, the January question gets the right fund, CTE queries work, the transaction is read-only (`nextval` fails), and full-text search is scoped. |
+| Content prep ([`content.test.ts`](src/server/extraction/content.test.ts))        | HTML → text keeps tables as rows and drops scripts and styles. CSV handling, `.eml` parsing, and detecting HTML by file extension.                                                                    |
+| Schema ([`schema.test.ts`](src/server/extraction/schema.test.ts))                | The Zod schema converts to a structured-output format and accepts a valid extraction. Date normalization rejects impossible dates.                                                                    |
+| Sync ([`sync.test.ts`](src/server/sync.test.ts))                                 | Change detection by md5, falling back to modified time.                                                                                                                                               |
+| Security helpers                                                                 | AES-GCM round-trip, a fresh IV each time, tamper and wrong-key detection. The sign-in allow-list matches emails and domains.                                                                          |
+| UI logic                                                                         | Return, date and relative-time formatting. The monthly-grid pivot.                                                                                                                                    |
+
+**Checked by hand:**
+
+- The UI in a browser with seeded data at desktop and phone widths: dashboard, filters, sorting, monthly
+  grid, document dialog.
+- API error responses: 400 for invalid input, 401 when signed out, 404 for unknown documents.
+- The production deploy on Render and its health check.
+- The extraction request sent to the real Claude API with an invalid key, which returned `401`. This
+  confirms the streamed, schema-constrained request is built correctly.
+
+**Not yet automated:** an end-to-end run against the live Claude and Drive APIs. The natural next step is
+an **extraction eval**: real factsheets with hand-labeled expected rows, scored on per-field precision and
+recall, run whenever the prompt or schema changes.
 
 ## Limitations and next steps
 
@@ -427,31 +458,47 @@ precision and recall, run whenever the prompt or schema changes.
 
 ## Project layout
 
+Server-only code lives in `src/server/` and imports `server-only`, so the build fails if a client
+component ever pulls it in. `src/lib/` holds code that is safe on both sides. Route handlers stay thin:
+they validate input with Zod, call a query or service function, and return JSON. Auth and error handling
+live in one wrapper ([`src/server/http.ts`](src/server/http.ts)), which returns safe messages for expected
+errors and a generic message for anything unexpected.
+
 ```
 src/
 ├─ app/
-│  ├─ page.tsx                  Landing page + Google One Tap
-│  ├─ dashboard/page.tsx        Authenticated app shell
-│  └─ api/
-│     ├─ auth/google            Verify the One Tap ID token → session
-│     ├─ drive/connect          Exchange the GIS auth code → encrypted refresh token
-│     ├─ drive/folders|folder   Folder picker + choosing the folder to watch
-│     ├─ sync, cron/sync        Manual / scheduled sync
-│     ├─ documents[/id]         List, detail, re-extract
-│     ├─ performance            Filtered performance rows
-│     ├─ ask                    Q&A agent
-│     └─ status, health
-├─ components/                  Dashboard, performance table/grid, documents, Ask chat, shadcn/ui
-├─ lib/
-│  ├─ extract.ts                Extraction schema + prompt (Claude structured outputs)
-│  ├─ content.ts                PDF / HTML / EML / CSV → Claude content blocks
-│  ├─ sync.ts                   Drive diff, processing queue, persistence
-│  ├─ ask.ts                    Q&A agent: scoped read-only SQL + full-text search tools
-│  ├─ google.ts                 OAuth, ID token verification, Drive listing/download
-│  ├─ db.ts                     postgres.js client + idempotent schema
-│  ├─ session.ts, crypto.ts     JWT sessions, AES-GCM token encryption
-│  └─ poller.ts                 Background sync loop (started from instrumentation.ts)
-└─ instrumentation.ts
-samples/                        Test documents in three different formats
-render.yaml                     Render Blueprint
+│  ├─ page.tsx                    Landing page + Google One Tap
+│  ├─ dashboard/page.tsx          Authenticated app shell
+│  └─ api/                        Thin route handlers (Zod input → server function → JSON)
+│     ├─ auth/google, auth/logout
+│     ├─ drive/connect            Exchange the GIS auth code (POST) / revoke and delete (DELETE)
+│     ├─ drive/folders, drive/folder   Folder picker, choose the folder to watch
+│     ├─ sync, cron/sync          Manual / scheduled sync (runs after the response via `after()`)
+│     ├─ documents, documents/[id]     List and search, detail, re-extract
+│     ├─ performance, ask, status, health
+├─ server/                        Server-only
+│  ├─ http.ts                     route()/authedRoute() wrappers, HttpError, readJson()
+│  ├─ env.ts                      Typed, lazily-validated configuration
+│  ├─ db.ts, schema.ts            postgres.js client, idempotent schema
+│  ├─ session.ts, crypto.ts       JWT cookie sessions, AES-GCM token encryption
+│  ├─ google.ts, drive.ts         OAuth + ID token verification; Drive listing and download
+│  ├─ claude.ts                   Anthropic client + refusal fallback config
+│  ├─ extraction/                 schema.ts (Zod), content.ts (file → content blocks), extract.ts (Claude)
+│  ├─ ask/                        agent.ts (tool loop), sql.ts (SQL guard, scoped runner, search)
+│  ├─ queries/                    All SQL for the app: users, connections, documents, performance
+│  ├─ sync.ts                     Drive diff + processing queue
+│  └─ poller.ts                   Background sync loop (started from instrumentation.ts)
+├─ components/
+│  ├─ dashboard/                  Shell, header, account menu, stats, connect card, folder picker
+│  ├─ performance/                Filters, sortable table, monthly grid
+│  ├─ documents/                  Table, detail dialog, status badge
+│  ├─ ask/                        Chat view and message rendering
+│  ├─ auth/, common/              One Tap button; search input, empty state, skeletons, return cell
+│  └─ ui/                         shadcn/ui primitives (generated)
+├─ hooks/                         useSyncStatus (SWR polling), useConnectDrive, useDebouncedValue
+└─ lib/                           Shared: types, fetcher, formatting, constants, GIS loader
+samples/                          Test documents in three different formats
+test/                             Vitest support (server-only stub)
+.github/workflows/ci.yml          Lint, typecheck, format check, tests (with Postgres), build
+render.yaml                       Render Blueprint
 ```

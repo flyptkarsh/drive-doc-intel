@@ -1,13 +1,14 @@
-import { NextResponse } from "next/server";
-import { env } from "@/lib/env";
-import { syncAll } from "@/lib/sync";
+import { after } from "next/server";
+import { env } from "@/server/env";
+import { HttpError, ok, route } from "@/server/http";
+import { syncAllUsers } from "@/server/sync";
 
-// For an external scheduler (e.g. a Render cron job): wakes the service and syncs everyone.
-export async function POST(req: Request) {
+/** For an external scheduler: `Authorization: Bearer $CRON_SECRET`. */
+export const POST = route(async (req) => {
   const secret = env.cronSecret;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    throw new HttpError(401, "Unauthorized");
   }
-  syncAll().catch((err) => console.error("Cron sync failed:", err));
-  return NextResponse.json({ ok: true });
-}
+  after(() => syncAllUsers().catch((err) => console.error("Cron sync failed:", err)));
+  return ok();
+});

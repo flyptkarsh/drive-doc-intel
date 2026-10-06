@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
-import { destroySession } from "@/lib/session";
+import { ok, route } from "@/server/http";
+import { destroySession } from "@/server/session";
 
-export async function POST() {
+export const POST = route(async () => {
   await destroySession();
-  return NextResponse.json({ ok: true });
-}
+  return ok();
+});

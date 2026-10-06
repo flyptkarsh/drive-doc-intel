@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db } from "@/server/db";
+import { ok, route } from "@/server/http";
 
-export async function GET() {
+/** Liveness plus database reachability; used as Render's health check. */
+export const GET = route(async () => {
   const sql = await db();
   await sql`select 1`;
-  return NextResponse.json({ ok: true });
-}
+  return ok();
+});
