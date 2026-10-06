@@ -39,7 +39,6 @@ export const SUPPORTED_MIME = new Set([
   "text/csv",
   "text/plain",
   "message/rfc822",
-  "application/vnd.ms-outlook",
   "application/vnd.google-apps.document",
   "application/vnd.google-apps.spreadsheet",
 ]);

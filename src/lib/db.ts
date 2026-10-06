@@ -75,13 +75,27 @@ create table if not exists documents (
   search tsvector generated always as (
     setweight(to_tsvector('english', coalesce(name, '') || ' ' || coalesce(title, '') || ' ' || coalesce(manager, '')), 'A') ||
     setweight(to_tsvector('english', coalesce(summary, '')), 'B') ||
-    setweight(to_tsvector('english', left(coalesce(text_content, ''), 500000)), 'C')
+    setweight(to_tsvector('english', left(coalesce(text_content, ''), 200000)), 'C')
   ) stored,
   processed_at timestamptz,
   created_at timestamptz not null default now(),
   unique (user_id, drive_file_id)
 );
 create index if not exists documents_search_idx on documents using gin (search);
+-- Earlier versions indexed 500k characters, which can exceed the 1 MB tsvector limit.
+do $$ begin
+  if exists (
+    select 1 from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+    where d.adrelid = 'documents'::regclass and a.attname = 'search'
+      and pg_get_expr(d.adbin, d.adrelid) like '%500000%'
+  ) then
+    alter table documents alter column search set expression as (
+      setweight(to_tsvector('english', coalesce(name, '') || ' ' || coalesce(title, '') || ' ' || coalesce(manager, '')), 'A') ||
+      setweight(to_tsvector('english', coalesce(summary, '')), 'B') ||
+      setweight(to_tsvector('english', left(coalesce(text_content, ''), 200000)), 'C')
+    );
+  end if;
+end $$;
 create index if not exists documents_user_idx on documents (user_id, status);
 
 create table if not exists funds (

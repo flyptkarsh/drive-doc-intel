@@ -8,6 +8,6 @@ export async function POST(req: Request) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  void syncAll();
+  syncAll().catch((err) => console.error("Cron sync failed:", err));
   return NextResponse.json({ ok: true });
 }

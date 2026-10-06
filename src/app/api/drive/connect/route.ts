@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { handler } from "@/lib/api";
 import { db } from "@/lib/db";
-import { encrypt } from "@/lib/crypto";
+import { decrypt, encrypt } from "@/lib/crypto";
 import { DRIVE_SCOPE, oauthClient } from "@/lib/google";
 import { requireUser } from "@/lib/session";
 
@@ -39,6 +39,13 @@ export const POST = handler(async (req: Request) => {
 export const DELETE = handler(async () => {
   const user = await requireUser();
   const sql = await db();
+  const [conn] = await sql<{ refresh_token_enc: string }[]>`
+    select refresh_token_enc from drive_connections where user_id = ${user.id}`;
+  if (conn) {
+    await oauthClient()
+      .revokeToken(decrypt(conn.refresh_token_enc))
+      .catch((err) => console.warn("Token revocation failed:", err.message));
+  }
   await sql`delete from drive_connections where user_id = ${user.id}`;
   await sql`delete from documents where user_id = ${user.id}`;
   return NextResponse.json({ ok: true });

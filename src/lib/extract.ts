@@ -84,9 +84,11 @@ export async function extractDocument(
     ? knownFunds.slice(0, 300).map((f) => `- ${f}`).join("\n")
     : "(none yet)";
 
-  const response = await anthropic().beta.messages.parse({
+  // Streamed because a dense factsheet can produce a long response; the SDK
+  // refuses non-streaming requests with a max_tokens this large.
+  const stream = anthropic().beta.messages.stream({
     model: env.model,
-    max_tokens: 32000,
+    max_tokens: 64000,
     ...FALLBACK,
     thinking: { type: "adaptive" },
     output_config: {
@@ -107,6 +109,7 @@ export async function extractDocument(
       },
     ],
   });
+  const response = await stream.finalMessage();
 
   if (response.stop_reason === "refusal") {
     throw new Error("The model declined to process this document.");

@@ -30,6 +30,7 @@ export function Dashboard({ user, clientId }: { user: User; clientId: string }) 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const lastSignature = useRef("");
+  const promptedForFolder = useRef(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -41,7 +42,10 @@ export function Dashboard({ user, clientId }: { user: User; clientId: string }) 
         lastSignature.current = sig;
         setRefreshKey((k) => k + 1);
       }
-      if (s.connected && !s.connection?.folder_id) setPickerOpen(true);
+      if (s.connected && !s.connection?.folder_id && !promptedForFolder.current) {
+        promptedForFolder.current = true;
+        setPickerOpen(true);
+      }
     } catch {
       /* keep the last known status */
     }
