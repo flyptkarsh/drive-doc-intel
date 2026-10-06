@@ -4,7 +4,7 @@
 # Authorized JavaScript origins.
 databases:
   - name: drive-doc-intel-db
-    plan: basic-256mb
+    plan: basic-256mb # "0.1c-256mb" in the Render CLI
     databaseName: drive_doc_intel
     user: drive_doc_intel
 
@@ -13,7 +13,7 @@ services:
     name: drive-doc-intel
     runtime: node
     plan: starter # stays awake so the Drive poller keeps running
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
