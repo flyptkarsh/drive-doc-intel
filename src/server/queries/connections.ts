@@ -1,6 +1,7 @@
 import "server-only";
 import type { SyncStatus } from "@/lib/types";
 import { db } from "../db";
+import { RECONNECT_HINT } from "../errors";
 
 export type DriveConnection = {
   user_id: string;
@@ -87,6 +88,7 @@ export async function getSyncStatus(userId: string, syncing: boolean): Promise<S
       folder_name: conn.folder_name,
       last_synced_at: conn.last_synced_at?.toISOString() ?? null,
       last_sync_error: conn.last_sync_error,
+      needs_reconnect: !!conn.last_sync_error?.includes(RECONNECT_HINT),
     },
     syncing,
     counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),

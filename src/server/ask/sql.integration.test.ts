@@ -71,11 +71,12 @@ describe.skipIf(!url)("runScopedQuery (Postgres)", () => {
     expect(row.avg_return).toBeCloseTo(1.05);
   });
 
-  it("runs in a read-only transaction", async () => {
-    // Passes the validator, but advancing a sequence is a write.
-    await expect(
-      runScopedQuery(sql, alice, "select nextval('performance_id_seq')"),
-    ).rejects.toThrow(/read-only transaction/);
+  it.each([
+    'select count(*) from "public".documents',
+    "select count(*) from public/**/.documents",
+    "select query_to_xml('select count(*) from pu'||'blic.users', true, false, '')",
+  ])("refuses to read other users' data via %s", async (query) => {
+    await expect(runScopedQuery(sql, bob, query)).rejects.toThrow(/not allowed/);
   });
 
   it("scopes full-text search to the user", async () => {

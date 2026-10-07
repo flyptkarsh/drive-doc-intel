@@ -53,7 +53,7 @@ export async function getDocumentDetail(
 export async function markPending(userId: string, documentId: string): Promise<boolean> {
   const sql = await db();
   const rows = await sql`
-    update documents set status = 'pending', error = null
+    update documents set status = 'pending', error = null, claim_id = null
     where id = ${documentId} and user_id = ${userId}
     returning id`;
   return rows.length > 0;
@@ -63,7 +63,7 @@ export async function markPending(userId: string, documentId: string): Promise<b
 export async function requeueFailed(userId: string): Promise<number> {
   const sql = await db();
   const rows = await sql`
-    update documents set status = 'pending', error = null
+    update documents set status = 'pending', error = null, claim_id = null
     where user_id = ${userId} and status = 'error'
     returning id`;
   return rows.length;
@@ -79,12 +79,26 @@ export type DocumentState = {
   status: string;
 };
 
-export type PendingDocument = {
+/** A document a worker has claimed; only the holder of `claim_id` may record its result. */
+export type ClaimedDocument = {
   id: string;
   drive_file_id: string;
   name: string;
   mime_type: string;
+  size_bytes: number | null;
+  claim_id: string;
 };
+
+/** Raised when a document's claim was taken over or cleared while it was being processed. */
+export class ClaimLostError extends Error {
+  override name = "ClaimLostError";
+}
+
+/** Claims older than this are assumed abandoned (crashed or replaced instance) and re-claimed. */
+const CLAIM_TIMEOUT = "15 minutes";
+
+/** Original text kept for full-text search; larger documents are truncated. */
+const MAX_STORED_TEXT_CHARS = 2_000_000;
 
 export async function listDocumentStates(userId: string): Promise<DocumentState[]> {
   const sql = await db();
@@ -98,13 +112,23 @@ export async function deleteDocument(documentId: string): Promise<void> {
   await sql`delete from documents where id = ${documentId}`;
 }
 
-export async function insertDocument(userId: string, file: DriveFile): Promise<void> {
+/**
+ * Adds a newly seen file, but only while `folderId` is still the user's watched
+ * folder, so a sync of a folder the user just switched away from adds nothing.
+ */
+export async function insertDocument(
+  userId: string,
+  folderId: string,
+  file: DriveFile,
+): Promise<void> {
   const sql = await db();
   await sql`
     insert into documents (user_id, drive_file_id, name, mime_type, web_view_link,
       drive_modified_at, md5, size_bytes, status)
-    values (${userId}, ${file.id}, ${file.name}, ${file.mimeType}, ${file.webViewLink},
-      ${file.modifiedTime}, ${file.md5Checksum}, ${file.size}, 'pending')
+    select ${userId}, ${file.id}, ${file.name}, ${file.mimeType}, ${file.webViewLink},
+      ${file.modifiedTime}, ${file.md5Checksum}, ${file.size}, 'pending'
+    where exists (select 1 from drive_connections
+                  where user_id = ${userId} and folder_id = ${folderId})
     on conflict (user_id, drive_file_id) do nothing`;
 }
 
@@ -117,29 +141,49 @@ export async function updateDocumentFromDrive(
   await sql`
     update documents set name = ${file.name}, web_view_link = ${file.webViewLink},
       drive_modified_at = ${file.modifiedTime}, md5 = ${file.md5Checksum}, size_bytes = ${file.size},
-      status = case when ${requeue} then 'pending' else status end
+      status = case when ${requeue} then 'pending' else status end,
+      -- Re-queuing voids any in-flight claim so a stale result can't overwrite the new version.
+      claim_id = case when ${requeue} then null else claim_id end
     where id = ${documentId}`;
 }
 
-export async function listPendingDocuments(userId: string): Promise<PendingDocument[]> {
+/**
+ * Atomically claims the user's next document to process: a pending one, or one
+ * whose claim has expired. Safe to call from several workers and instances at
+ * once; each document goes to exactly one caller.
+ */
+export async function claimNextDocument(
+  userId: string,
+  folderId: string,
+): Promise<ClaimedDocument | null> {
   const sql = await db();
-  // 'processing' rows are leftovers from an interrupted run and are picked up again.
-  return sql<PendingDocument[]>`
-    select id, drive_file_id, name, mime_type from documents
-    where user_id = ${userId} and status in ('pending', 'processing')
-    order by created_at`;
+  const [doc] = await sql<ClaimedDocument[]>`
+    update documents
+    set status = 'processing', error = null, claim_id = gen_random_uuid(), claimed_at = now()
+    where id = (
+      select id from documents
+      where user_id = ${userId}
+        -- Stop claiming once the user switches folders or disconnects.
+        and exists (select 1 from drive_connections
+                    where user_id = ${userId} and folder_id = ${folderId})
+        and (status = 'pending'
+             or (status = 'processing'
+                 and (claimed_at is null or claimed_at < now() - ${CLAIM_TIMEOUT}::interval)))
+      order by created_at
+      limit 1
+      for update skip locked
+    )
+    returning id, drive_file_id, name, mime_type, size_bytes, claim_id`;
+  return doc ?? null;
 }
 
-export async function markProcessing(documentId: string): Promise<void> {
-  const sql = await db();
-  await sql`update documents set status = 'processing', error = null where id = ${documentId}`;
-}
-
-export async function markFailed(documentId: string, error: string): Promise<void> {
+/** Records a failure, unless the claim has since been taken over or voided. */
+export async function markFailed(doc: ClaimedDocument, error: string): Promise<void> {
   const sql = await db();
   await sql`
-    update documents set status = 'error', error = ${error}, processed_at = now()
-    where id = ${documentId}`;
+    update documents
+    set status = 'error', error = ${error}, processed_at = now(), claim_id = null
+    where id = ${doc.id} and claim_id = ${doc.claim_id}`;
 }
 
 /** Fund names from the user's other documents, used to keep naming consistent. */
@@ -155,12 +199,18 @@ export async function knownFundNames(userId: string, excludeDocumentId: string):
 /** Replaces a document's extracted rows and marks it done, atomically. */
 export async function saveExtraction(
   userId: string,
-  documentId: string,
+  doc: ClaimedDocument,
   x: Extraction,
   textContent: string,
 ): Promise<void> {
   const sql = await db();
+  const documentId = doc.id;
   await sql.begin(async (tx) => {
+    // Lock the row and confirm we still own it; otherwise discard this result.
+    const owned = await tx`
+      select 1 from documents where id = ${documentId} and claim_id = ${doc.claim_id} for update`;
+    if (owned.length === 0) throw new ClaimLostError(`Claim on "${doc.name}" was lost`);
+
     await tx`delete from funds where document_id = ${documentId}`;
     await tx`delete from performance where document_id = ${documentId}`;
     await tx`delete from metrics where document_id = ${documentId}`;
@@ -193,11 +243,11 @@ export async function saveExtraction(
       )}`;
     }
     await tx`
-      update documents set status = 'done', error = null, processed_at = now(),
+      update documents set status = 'done', error = null, processed_at = now(), claim_id = null,
         document_type = ${x.document_type}, title = ${x.title}, manager = ${x.manager},
         as_of_date = ${normalizeDate(x.as_of_date)}, currency = ${x.currency},
         summary = ${x.summary}, extraction = ${tx.json(x as never)},
-        text_content = ${textContent.replace(/\u0000/g, "")}
+        text_content = ${textContent.slice(0, MAX_STORED_TEXT_CHARS).replace(/\u0000/g, "")}
       where id = ${documentId}`;
   });
 }

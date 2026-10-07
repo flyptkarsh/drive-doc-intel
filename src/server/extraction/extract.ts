@@ -3,6 +3,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { anthropic, REFUSAL_FALLBACK } from "../claude";
 import { env } from "../env";
 import type { PreparedContent } from "./content";
+import { ExtractionError } from "./errors";
 import { ExtractionSchema, toExtraction, type Extraction } from "./schema";
 
 const MAX_KNOWN_FUNDS = 300;
@@ -22,16 +23,16 @@ Funds: list each fund or account the document covers. If a fund matches one in t
 
 Only report what the document states. Leave text fields as an empty string and number fields as null when the document doesn't say; leave arrays empty when a document has no such data. Dates are YYYY-MM-DD.`;
 
-export class ExtractionError extends Error {
-  override name = "ExtractionError";
-}
+export { ExtractionError };
+
+export type ExtractionUsage = { inputTokens: number; outputTokens: number };
 
 /** Extracts structured data from one prepared document with Claude structured outputs. */
 export async function extractDocument(
   fileName: string,
   content: PreparedContent,
   knownFunds: string[],
-): Promise<Extraction> {
+): Promise<{ extraction: Extraction; usage: ExtractionUsage }> {
   const known = knownFunds.length
     ? knownFunds
         .slice(0, MAX_KNOWN_FUNDS)
@@ -70,9 +71,17 @@ export async function extractDocument(
       throw new ExtractionError("The model declined to process this document.");
     case "max_tokens":
       throw new ExtractionError("The document produced more data than fits in one response.");
+    case "model_context_window_exceeded":
+      throw new ExtractionError("The document is too long for the model to read in one pass.");
   }
   if (!response.parsed_output) {
     throw new ExtractionError("The model's response did not match the extraction schema.");
   }
-  return toExtraction(response.parsed_output);
+  return {
+    extraction: toExtraction(response.parsed_output),
+    usage: {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
+  };
 }

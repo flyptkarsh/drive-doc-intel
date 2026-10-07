@@ -1,26 +1,32 @@
 import "server-only";
 import type { Sql } from "../db";
+import { validateQuery } from "./sql-guard";
+
+export { UnsafeQueryError, validateQuery } from "./sql-guard";
 
 /**
  * The only relations model-written SQL can see. Each is a CTE pre-filtered to
  * the signed-in user ($1), shadowing the real tables of the same name.
  */
-const SCOPED_TABLES = `
+const SCOPED_CTES = `
 documents as (
   select id, name, document_type, title, manager, as_of_date, currency, summary,
     web_view_link, drive_modified_at, processed_at
   from public.documents where user_id = $1 and status = 'done'),
 funds as (
   select document_id, fund_name, share_class, isin, ticker, strategy, asset_class
-  from public.funds where user_id = $1),
+  from public.funds where user_id = $1
+    and document_id in (select id from public.documents where user_id = $1 and status = 'done')),
 performance as (
   select document_id, fund_name, share_class, period_type, period_label, period_start,
     period_end, return_pct, benchmark_name, benchmark_return_pct, is_annualized,
     net_or_gross, currency
-  from public.performance where user_id = $1),
+  from public.performance where user_id = $1
+    and document_id in (select id from public.documents where user_id = $1 and status = 'done')),
 metrics as (
   select document_id, fund_name, name, value_number, value_text, unit, as_of_date
-  from public.metrics where user_id = $1)`;
+  from public.metrics where user_id = $1
+    and document_id in (select id from public.documents where user_id = $1 and status = 'done'))`;
 
 export const SCHEMA_DESCRIPTION = `Tables (PostgreSQL):
 documents(id uuid, name text, document_type text, title text, manager text, as_of_date date, currency text, summary text, web_view_link text, drive_modified_at timestamptz, processed_at timestamptz)
@@ -36,53 +42,34 @@ metrics.name is snake_case, e.g. aum, nav, account_value, sharpe_ratio, volatili
 const MAX_ROWS = 200;
 const STATEMENT_TIMEOUT_MS = 5_000;
 
-const FORBIDDEN = [
-  /;/, // a single statement only
-  /\b(insert|update|delete|merge|truncate|alter|drop|create|grant|revoke)\b/i, // no writes or DDL, even inside a CTE
-  /\b(public|pg_catalog|information_schema)\s*\./i, // no schema-qualified names
-  /\bpg_\w+/i, // no system functions or catalogs
-  /\b(users|drive_connections)\b/i, // no tables outside the scoped set
-  /\b(set_config|current_setting|dblink|lo_\w+|copy)\b/i,
-];
-
-export class UnsafeQueryError extends Error {
-  override name = "UnsafeQueryError";
-}
-
-/** Validates model-written SQL and returns it normalized, or throws UnsafeQueryError. */
-export function validateQuery(query: string): string {
-  const normalized = query.trim().replace(/;+\s*$/, "");
-  if (!/^(select|with)\b/i.test(normalized)) {
-    throw new UnsafeQueryError("Only SELECT queries are allowed.");
-  }
-  if (FORBIDDEN.some((pattern) => pattern.test(normalized))) {
-    throw new UnsafeQueryError("Query references something outside the allowed tables.");
-  }
-  return normalized;
-}
-
 /**
  * Runs a validated query against the user's data only: scoped CTEs, a
  * read-only transaction, a statement timeout and a row cap.
  */
 export async function runScopedQuery(sql: Sql, userId: string, query: string) {
-  const wrapped = `with ${SCOPED_TABLES} select * from (${validateQuery(query)}) as result limit ${MAX_ROWS}`;
+  const wrapped = `with ${SCOPED_CTES} select * from (${await validateQuery(query)}) as result limit ${MAX_ROWS}`;
   return sql.begin("read only", async (tx) => {
     await tx.unsafe(`set local statement_timeout = ${STATEMENT_TIMEOUT_MS}`);
     return tx.unsafe(wrapped, [userId]);
   });
 }
 
+/** Characters of document text that search highlights excerpts from. */
+const HEADLINE_SOURCE_CHARS = 100_000;
+
 /** Full-text search over the user's documents, with highlighted excerpts. */
 export async function searchDocuments(sql: Sql, userId: string, query: string) {
-  return sql`
-    select id, name, title, manager, as_of_date, document_type, summary,
-      ts_headline('english', coalesce(text_content, ''),
-        websearch_to_tsquery('english', ${query}),
-        'MaxFragments=3, MaxWords=30, MinWords=10') as excerpt
-    from documents
-    where user_id = ${userId} and status = 'done'
-      and search @@ websearch_to_tsquery('english', ${query})
-    order by ts_rank(search, websearch_to_tsquery('english', ${query})) desc
-    limit 8`;
+  return sql.begin("read only", async (tx) => {
+    await tx.unsafe(`set local statement_timeout = ${STATEMENT_TIMEOUT_MS}`);
+    return tx`
+      select id, name, title, manager, as_of_date, document_type, summary,
+        ts_headline('english', left(coalesce(text_content, ''), ${HEADLINE_SOURCE_CHARS}),
+          websearch_to_tsquery('english', ${query}),
+          'MaxFragments=3, MaxWords=30, MinWords=10') as excerpt
+      from documents
+      where user_id = ${userId} and status = 'done'
+        and search @@ websearch_to_tsquery('english', ${query})
+      order by ts_rank(search, websearch_to_tsquery('english', ${query})) desc
+      limit 8`;
+  });
 }

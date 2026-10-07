@@ -23,15 +23,19 @@ export async function listPerformance(
         p.return_pct, p.benchmark_name, p.benchmark_return_pct, p.is_annualized,
         p.net_or_gross, p.currency
       from performance p join documents d on d.id = p.document_id
-      where p.user_id = ${userId}
+      where p.user_id = ${userId} and d.status = 'done'
         ${fund ? sql`and p.fund_name = ${fund}` : sql``}
         ${periodType ? sql`and p.period_type = ${periodType}` : sql``}
         ${from ? sql`and p.period_end >= ${from}` : sql``}
         ${to ? sql`and p.period_end <= ${to}` : sql``}
       order by p.period_end desc nulls last, p.fund_name, p.period_type
-      limit ${MAX_ROWS}`,
+      limit ${MAX_ROWS + 1}`,
     sql<{ fund_name: string }[]>`
       select distinct fund_name from performance where user_id = ${userId} order by fund_name`,
   ]);
-  return { rows, funds: funds.map((f) => f.fund_name) };
+  return {
+    rows: rows.slice(0, MAX_ROWS),
+    funds: funds.map((f) => f.fund_name),
+    truncated: rows.length > MAX_ROWS,
+  };
 }

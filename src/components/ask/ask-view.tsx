@@ -22,7 +22,11 @@ export function AskView() {
   const [pending, setPending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages, pending]);
+  // Braces matter: scrollIntoView() returns a Promise in current browsers, and an
+  // effect must return nothing or a cleanup function.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, pending]);
 
   const send = async (question: string) => {
     const text = question.trim();

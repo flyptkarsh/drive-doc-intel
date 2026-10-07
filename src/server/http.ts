@@ -30,12 +30,34 @@ function errorResponse(err: unknown): Response {
   return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
 }
 
-/** Wraps a public route handler with consistent error responses. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Rejects state-changing requests sent by another site (CSRF). Browsers attach
+ * an Origin header to every cross-site POST; requests without one (curl, the
+ * cron caller) aren't browser-driven and are authorized by other means.
+ */
+function assertSameOrigin(req: Request): void {
+  if (SAFE_METHODS.has(req.method)) return;
+  const origin = req.headers.get("origin");
+  if (!origin) return;
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    throw new HttpError(403, "Cross-site request rejected.");
+  }
+  if (originHost !== host) throw new HttpError(403, "Cross-site request rejected.");
+}
+
+/** Wraps a public route handler with consistent error responses and CSRF protection. */
 export function route<Ctx = unknown>(
   fn: (req: Request, ctx: Ctx) => Promise<Response>,
 ): (req: Request, ctx: Ctx) => Promise<Response> {
   return async (req, ctx) => {
     try {
+      assertSameOrigin(req);
       return await fn(req, ctx);
     } catch (err) {
       return errorResponse(err);
@@ -54,8 +76,14 @@ export function authedRoute<Ctx = unknown>(
   });
 }
 
-/** Parses and validates a JSON request body. */
+/**
+ * Parses and validates a JSON request body. Requiring the JSON content type also
+ * means a plain cross-site HTML form can never produce a body this accepts.
+ */
 export async function readJson<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    throw new HttpError(415, "Request body must be sent as application/json");
+  }
   const body = await req.json().catch(() => {
     throw badRequest("Request body must be JSON");
   });
