@@ -414,7 +414,14 @@ TEST_DATABASE_URL=postgres://localhost/drive_doc_intel_dev npm test   # + Postgr
 npm run check                              # lint, typecheck, formatting and tests: what CI runs
 ```
 
-**Automated** (`*.test.ts`, run in CI on every push against a Postgres 17 service):
+**Continuous integration** runs two GitHub Actions workflows on every pull request and every push to `main`:
+
+| Workflow                           | Checks                                                                                                                                                                                                                           |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Lint](.github/workflows/lint.yml) | ESLint over every TS/JS file, failing on any warning (`--max-warnings=0`); TypeScript type-check; Prettier format check (TS, CSS, Markdown, JSON, YAML); [actionlint](https://github.com/rhysd/actionlint) on the workflow files |
+| [CI](.github/workflows/ci.yml)     | Unit and Postgres integration tests (against a Postgres 17 service), then the production build                                                                                                                                   |
+
+**Automated tests** (`*.test.ts`):
 
 | Area                                                                             | What's covered                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -499,6 +506,6 @@ src/
 └─ lib/                           Shared: types, fetcher, formatting, constants, GIS loader
 samples/                          Test documents in three different formats
 test/                             Vitest support (server-only stub)
-.github/workflows/ci.yml          Lint, typecheck, format check, tests (with Postgres), build
+.github/workflows/               lint.yml (ESLint, types, Prettier, actionlint), ci.yml (tests + build)
 render.yaml                       Render Blueprint
 ```

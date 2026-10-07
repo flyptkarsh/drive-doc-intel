@@ -1,12 +1,22 @@
 name: CI
 
+# Tests and build. Linting, type-checking and formatting live in lint.yml.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  check:
+  test:
+    name: Tests and build
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -26,8 +36,5 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run format:check
       - run: npm test
       - run: npm run build
