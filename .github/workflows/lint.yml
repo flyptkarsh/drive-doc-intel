@@ -1,0 +1,43 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code:
+    name: ESLint, types and formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      # Every .ts/.tsx/.js/.mjs file; the script fails on warnings too.
+      - name: ESLint
+        run: npm run lint
+      - name: TypeScript
+        run: npm run typecheck
+      # Formatting for TS, CSS, Markdown, JSON and YAML.
+      - name: Prettier
+        run: npm run format:check
+
+  workflows:
+    name: GitHub Actions workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
