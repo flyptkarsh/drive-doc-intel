@@ -24,7 +24,7 @@ describe("missingRequiredEnv", () => {
       GOOGLE_CLIENT_ID: "id",
       SESSION_SECRET: "s",
       ANTHROPIC_API_KEY: "",
-    } as NodeJS.ProcessEnv);
+    });
     expect(missing).toEqual([
       "GOOGLE_CLIENT_SECRET: Google OAuth client secret (Drive access)",
       "ANTHROPIC_API_KEY: Claude API key (extraction and Ask)",
@@ -39,6 +39,6 @@ describe("missingRequiredEnv", () => {
       ANTHROPIC_API_KEY: "d",
       SESSION_SECRET: "e",
     };
-    expect(missingRequiredEnv(env as NodeJS.ProcessEnv)).toEqual([]);
+    expect(missingRequiredEnv(env)).toEqual([]);
   });
 });

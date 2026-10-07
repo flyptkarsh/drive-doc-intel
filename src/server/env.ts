@@ -66,7 +66,9 @@ export const REQUIRED_ENV: Record<string, string> = {
 };
 
 /** Required variables that are unset, with their descriptions. */
-export function missingRequiredEnv(source: NodeJS.ProcessEnv = process.env): string[] {
+export function missingRequiredEnv(
+  source: Record<string, string | undefined> = process.env,
+): string[] {
   return Object.entries(REQUIRED_ENV)
     .filter(([name]) => !source[name])
     .map(([name, purpose]) => `${name}: ${purpose}`);
