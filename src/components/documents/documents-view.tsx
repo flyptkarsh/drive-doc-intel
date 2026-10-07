@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { toast } from "sonner";
+import { RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/common/empty-state";
 import { RowsSkeleton } from "@/components/common/rows-skeleton";
 import { SearchInput } from "@/components/common/search-input";
+import { Button } from "@/components/ui/button";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { swrFetcher } from "@/lib/fetcher";
+import { apiPost, swrFetcher } from "@/lib/fetcher";
 import type { DocumentRow } from "@/lib/types";
 import { DocumentDialog } from "./document-dialog";
 import { DocumentsTable } from "./documents-table";
@@ -15,21 +18,40 @@ export function DocumentsView() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const search = useDebouncedValue(query.trim());
-  const { data } = useSWR<{ documents: DocumentRow[] }>(
+  const { data, mutate } = useSWR<{ documents: DocumentRow[] }>(
     `/api/documents${search ? `?q=${encodeURIComponent(search)}` : ""}`,
     swrFetcher,
     { keepPreviousData: true },
   );
 
+  const failedCount = data?.documents.filter((doc) => doc.status === "error").length ?? 0;
+
+  const retryFailed = async () => {
+    try {
+      const { queued } = await apiPost<{ queued: number }>("/api/documents/retry-failed");
+      toast.success(`Retrying ${queued} ${queued === 1 ? "document" : "documents"}`);
+      void mutate();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <SearchInput
-        className="max-w-md"
-        placeholder="Search document text, managers, funds…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        aria-label="Search documents"
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput
+          className="max-w-md flex-1"
+          placeholder="Search document text, managers, funds…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search documents"
+        />
+        {failedCount > 0 && (
+          <Button variant="outline" onClick={retryFailed} className="ml-auto">
+            <RefreshCw /> Retry {failedCount} failed
+          </Button>
+        )}
+      </div>
       {!data ? (
         <RowsSkeleton rows={6} rowClassName="h-10" />
       ) : data.documents.length === 0 ? (

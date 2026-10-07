@@ -3,7 +3,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { anthropic, REFUSAL_FALLBACK } from "../claude";
 import { env } from "../env";
 import type { PreparedContent } from "./content";
-import { ExtractionSchema, type Extraction } from "./schema";
+import { ExtractionSchema, toExtraction, type Extraction } from "./schema";
 
 const MAX_KNOWN_FUNDS = 300;
 
@@ -20,7 +20,7 @@ Metrics: capture headline figures such as AUM, NAV per share, account value, fee
 
 Funds: list each fund or account the document covers. If a fund matches one in the known-funds list, use that exact fund_name so data lines up across documents.
 
-Only report what the document states. Use null for anything missing; leave arrays empty when a document has no such data. Dates are YYYY-MM-DD.`;
+Only report what the document states. Leave text fields as an empty string and number fields as null when the document doesn't say; leave arrays empty when a document has no such data. Dates are YYYY-MM-DD.`;
 
 export class ExtractionError extends Error {
   override name = "ExtractionError";
@@ -74,5 +74,5 @@ export async function extractDocument(
   if (!response.parsed_output) {
     throw new ExtractionError("The model's response did not match the extraction schema.");
   }
-  return response.parsed_output;
+  return toExtraction(response.parsed_output);
 }
