@@ -55,6 +55,9 @@ create table if not exists documents (
   unique (user_id, drive_file_id)
 );
 create index if not exists documents_search_idx on documents using gin (search);
+-- Processing claims: a worker owns a document while claim_id matches its token.
+alter table documents add column if not exists claim_id uuid;
+alter table documents add column if not exists claimed_at timestamptz;
 create index if not exists documents_user_idx on documents (user_id, status);
 
 -- Earlier versions indexed 500k characters, which can exceed the 1 MB tsvector limit.

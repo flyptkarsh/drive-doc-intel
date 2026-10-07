@@ -17,7 +17,14 @@ export const POST = authedRoute(async (req, user) => {
 /** Revokes Drive access and deletes everything ingested from it. */
 export const DELETE = authedRoute(async (_req, user) => {
   const conn = await getConnection(user.id);
-  if (conn) await revokeToken(decrypt(conn.refresh_token_enc));
+  if (conn) {
+    try {
+      await revokeToken(decrypt(conn.refresh_token_enc));
+    } catch (err) {
+      // e.g. ENCRYPTION_KEY changed; the grant can still be removed from the Google account.
+      console.warn("Could not revoke the stored Drive token:", (err as Error).message);
+    }
+  }
   await deleteConnection(user.id);
   return ok();
 });

@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { z } from "zod";
 import { authedRoute, notFound, ok } from "@/server/http";
 import { getDocumentDetail, markPending } from "@/server/queries/documents";
-import { syncUser } from "@/server/sync";
+import { syncInBackground } from "@/server/sync";
 
 type Ctx = RouteContext<"/api/documents/[id]">;
 
@@ -22,6 +22,6 @@ export const GET = authedRoute<Ctx>(async (_req, user, ctx) => {
 /** Re-runs extraction for one document. */
 export const POST = authedRoute<Ctx>(async (_req, user, ctx) => {
   if (!(await markPending(user.id, await documentId(ctx)))) throw notFound();
-  after(() => syncUser(user.id).catch(() => {}));
+  after(() => syncInBackground(user.id));
   return ok();
 });

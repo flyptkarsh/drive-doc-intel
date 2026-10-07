@@ -79,10 +79,13 @@ export async function ask(
 
     const toolUses = response.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
     if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
-      const answer = response.content
+      let answer = response.content
         .flatMap((b) => (b.type === "text" ? [b.text] : []))
         .join("\n")
         .trim();
+      if (response.stop_reason === "max_tokens" || response.stop_reason === "pause_turn") {
+        answer += "\n\n_(This answer was cut off. Try a narrower question.)_";
+      }
       return {
         answer: answer || "I couldn't produce an answer.",
         queries,

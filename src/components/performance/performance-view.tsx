@@ -69,6 +69,11 @@ export function PerformanceView() {
       ) : (
         <PerformanceTable rows={rows} />
       )}
+      {data?.truncated && (
+        <p className="text-center text-xs text-muted-foreground">
+          Only the most recent 5,000 matching rows are loaded. Narrow the filters to see others.
+        </p>
+      )}
     </div>
   );
 }

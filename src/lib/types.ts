@@ -18,6 +18,8 @@ export type SyncStatus = {
     folder_name: string | null;
     last_synced_at: string | null;
     last_sync_error: string | null;
+    /** The last error means Drive access is gone and the user must reconnect. */
+    needs_reconnect: boolean;
   } | null;
   syncing: boolean;
   counts: Partial<Record<DocumentStatus, number>>;
@@ -45,7 +47,12 @@ export type PerformanceRow = {
   currency: string | null;
 };
 
-export type PerformanceResponse = { rows: PerformanceRow[]; funds: string[] };
+export type PerformanceResponse = {
+  rows: PerformanceRow[];
+  funds: string[];
+  /** More rows matched than were returned; narrow the filters. */
+  truncated: boolean;
+};
 
 export type DocumentRow = {
   id: string;

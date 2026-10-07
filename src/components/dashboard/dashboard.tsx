@@ -96,7 +96,11 @@ export function Dashboard({ user, clientId }: { user: User; clientId: string }) 
         {status?.connected && (
           <div className="space-y-6">
             {status.connection?.last_sync_error && (
-              <SyncErrorBanner error={status.connection.last_sync_error} onReconnect={reconnect} />
+              <SyncErrorBanner
+                error={status.connection.last_sync_error}
+                needsReconnect={status.connection.needs_reconnect}
+                onReconnect={reconnect}
+              />
             )}
             <StatCards counts={status.counts} />
             <Tabs defaultValue="performance">

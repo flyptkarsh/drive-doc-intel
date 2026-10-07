@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/common/empty-state";
@@ -10,7 +10,7 @@ import { SearchInput } from "@/components/common/search-input";
 import { Button } from "@/components/ui/button";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { apiPost, swrFetcher } from "@/lib/fetcher";
-import type { DocumentRow } from "@/lib/types";
+import type { DocumentRow, SyncStatus } from "@/lib/types";
 import { DocumentDialog } from "./document-dialog";
 import { DocumentsTable } from "./documents-table";
 
@@ -24,13 +24,17 @@ export function DocumentsView() {
     { keepPreviousData: true },
   );
 
-  const failedCount = data?.documents.filter((doc) => doc.status === "error").length ?? 0;
+  // From the status endpoint, not the (possibly search-filtered) list: retry covers every failure.
+  const { data: status } = useSWR<SyncStatus>("/api/status", swrFetcher);
+  const { mutate: mutateGlobal } = useSWRConfig();
+  const failedCount = status?.counts.error ?? 0;
 
   const retryFailed = async () => {
     try {
       const { queued } = await apiPost<{ queued: number }>("/api/documents/retry-failed");
       toast.success(`Retrying ${queued} ${queued === 1 ? "document" : "documents"}`);
       void mutate();
+      void mutateGlobal("/api/status");
     } catch (err) {
       toast.error((err as Error).message);
     }

@@ -4,9 +4,12 @@ import { Card, CardContent } from "@/components/ui/card";
 
 export function SyncErrorBanner({
   error,
+  needsReconnect,
   onReconnect,
 }: {
   error: string;
+  /** Offer "Reconnect Drive" only when the error is about lost Drive access. */
+  needsReconnect: boolean;
   onReconnect: () => void;
 }) {
   return (
@@ -17,9 +20,11 @@ export function SyncErrorBanner({
           <div className="font-medium">The last sync failed</div>
           <div className="text-muted-foreground">{error}</div>
         </div>
-        <Button size="sm" variant="outline" onClick={onReconnect}>
-          Reconnect Drive
-        </Button>
+        {needsReconnect && (
+          <Button size="sm" variant="outline" onClick={onReconnect}>
+            Reconnect Drive
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

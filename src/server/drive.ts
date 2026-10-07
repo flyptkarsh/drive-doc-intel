@@ -22,6 +22,12 @@ const SUPPORTED_MIME = new Set([
   GOOGLE_SHEET_MIME,
 ]);
 const SUPPORTED_EXTENSION = /\.(pdf|html?|csv|eml|txt)$/i;
+/** Google-native types other than Docs and Sheets (Slides, Forms, shortcuts…) can't be read. */
+const GOOGLE_NATIVE_PREFIX = "application/vnd.google-apps.";
+
+/** Larger files are refused before download: they risk running the server out of memory. */
+export const MAX_FILE_BYTES = 30 * 1024 * 1024;
+const MAX_PICKER_FOLDERS = 500;
 
 export type DriveFile = {
   id: string;
@@ -34,7 +40,29 @@ export type DriveFile = {
 };
 
 export function isSupported(file: { name?: string | null; mimeType?: string | null }): boolean {
-  return SUPPORTED_MIME.has(file.mimeType ?? "") || SUPPORTED_EXTENSION.test(file.name ?? "");
+  const mimeType = file.mimeType ?? "";
+  if (SUPPORTED_MIME.has(mimeType)) return true;
+  // A shortcut or Slides file can be *named* "report.pdf" but can't be downloaded as one.
+  if (mimeType.startsWith(GOOGLE_NATIVE_PREFIX)) return false;
+  return SUPPORTED_EXTENSION.test(file.name ?? "");
+}
+
+/**
+ * Confirms the watched folder still exists and isn't trashed. Drive answers a
+ * listing of a missing folder with an empty list rather than an error, which
+ * would otherwise look like every file was deleted.
+ */
+export async function assertFolderAccessible(client: Drive, folderId: string): Promise<void> {
+  const missing = new Error(
+    "The watched folder was deleted, trashed or is no longer shared with you. Choose a folder again.",
+  );
+  const res = await client.files
+    .get({ fileId: folderId, fields: "id, trashed, mimeType", supportsAllDrives: true })
+    .catch((err: { code?: number; status?: number }) => {
+      if (err.code === 404 || err.status === 404) throw missing;
+      throw err;
+    });
+  if (res.data.trashed || res.data.mimeType !== FOLDER_MIME) throw missing;
 }
 
 /** Drive client authorized with a user's stored (encrypted) refresh token. */
@@ -61,19 +89,26 @@ export async function listFolders(
   { parentId = "root", search }: { parentId?: string; search?: string },
 ): Promise<DriveFolder[]> {
   const scope = search ? `name contains ${quote(search)}` : `${quote(parentId)} in parents`;
-  const res = await client.files
-    .list({
-      q: `mimeType = '${FOLDER_MIME}' and trashed = false and ${scope}`,
-      fields: "files(id, name)",
-      orderBy: "name",
-      pageSize: 100,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    })
-    .catch((err) => {
-      throw toHttpError(err);
-    });
-  return (res.data.files ?? []).map((f) => ({ id: f.id!, name: f.name ?? "Untitled" }));
+  const folders: DriveFolder[] = [];
+  let pageToken: string | undefined;
+  try {
+    do {
+      const res = await client.files.list({
+        q: `mimeType = '${FOLDER_MIME}' and trashed = false and ${scope}`,
+        fields: "nextPageToken, files(id, name)",
+        orderBy: "name",
+        pageSize: 200,
+        pageToken,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      });
+      for (const f of res.data.files ?? []) folders.push({ id: f.id!, name: f.name ?? "Untitled" });
+      pageToken = res.data.nextPageToken ?? undefined;
+    } while (pageToken && folders.length < MAX_PICKER_FOLDERS);
+  } catch (err) {
+    throw toHttpError(err);
+  }
+  return folders;
 }
 
 /** Every ingestible file in a folder, descending into subfolders. */
@@ -127,10 +162,14 @@ export async function downloadFile(
         ? "text/csv"
         : null;
   const res = exportAs
-    ? await client.files.export(
-        { fileId: file.id, mimeType: exportAs },
-        { responseType: "arraybuffer" },
-      )
+    ? await client.files
+        .export({ fileId: file.id, mimeType: exportAs }, { responseType: "arraybuffer" })
+        .catch((err: Error) => {
+          if (/exportSizeLimitExceeded|too large to be exported/i.test(err.message)) {
+            throw new Error("This Google Doc is too large for Google to export (10 MB limit).");
+          }
+          throw err;
+        })
     : await client.files.get(
         { fileId: file.id, alt: "media", supportsAllDrives: true },
         { responseType: "arraybuffer" },
