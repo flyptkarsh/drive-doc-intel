@@ -59,6 +59,16 @@ export async function markPending(userId: string, documentId: string): Promise<b
   return rows.length > 0;
 }
 
+/** Queues every failed document for another attempt. Returns how many were queued. */
+export async function requeueFailed(userId: string): Promise<number> {
+  const sql = await db();
+  const rows = await sql`
+    update documents set status = 'pending', error = null
+    where user_id = ${userId} and status = 'error'
+    returning id`;
+  return rows.length;
+}
+
 // ---- Sync bookkeeping ------------------------------------------------------
 
 export type DocumentState = {
