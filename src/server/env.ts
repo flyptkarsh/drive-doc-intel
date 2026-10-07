@@ -56,6 +56,24 @@ export const env = {
   },
 };
 
+/** Variables the app can't run without, and what each one is for. */
+export const REQUIRED_ENV: Record<string, string> = {
+  DATABASE_URL: "Postgres connection string",
+  GOOGLE_CLIENT_ID: "Google OAuth client ID (sign-in and Drive)",
+  GOOGLE_CLIENT_SECRET: "Google OAuth client secret (Drive access)",
+  ANTHROPIC_API_KEY: "Claude API key (extraction and Ask)",
+  SESSION_SECRET: "random string that signs session cookies",
+};
+
+/** Required variables that are unset, with their descriptions. */
+export function missingRequiredEnv(
+  source: Record<string, string | undefined> = process.env,
+): string[] {
+  return Object.entries(REQUIRED_ENV)
+    .filter(([name]) => !source[name])
+    .map(([name, purpose]) => `${name}: ${purpose}`);
+}
+
 /** The OAuth client ID handed to the browser for Google Identity Services, if configured. */
 export function publicGoogleClientId(): string | null {
   return optional("GOOGLE_CLIENT_ID") ?? null;

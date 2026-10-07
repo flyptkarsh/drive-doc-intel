@@ -17,6 +17,7 @@
 5. [Data model](#data-model)
 6. [Security](#security)
 7. [Running it locally](#running-it-locally)
+   - [API keys and secrets](#api-keys-and-secrets)
    - [FAQ: running locally](#faq-running-locally)
 8. [Deploying to Render](#deploying-to-render)
 9. [Testing](#testing)
@@ -196,23 +197,82 @@ removes its data.
 git clone https://github.com/flyptkarsh/drive-doc-intel && cd drive-doc-intel
 npm install
 createdb drive_doc_intel_dev
-cp .env.example .env.local    # fill in the values below
+cp .env.example .env.local    # add your keys: see “API keys and secrets” below
 npm run dev                   # http://localhost:3000; the schema is created on first request
 ```
 
-### Google OAuth client
+### API keys and secrets
 
-In Google Cloud Console → APIs & Services:
+You need **two external credentials**: a Google OAuth client (an ID and a secret) and an Anthropic API
+key. You generate one secret yourself, and point the app at a database. All of them go in `.env.local`:
 
-1. Create (or reuse) an OAuth client of type **Web application**.
-2. **Authorized JavaScript origins:** `http://localhost:3000` and your deployed URL. No redirect URI is needed
-   because the code flow uses the GIS popup (`postmessage`).
-3. **Enable the Google Drive API.**
-4. **OAuth consent screen → Data access:** add `https://www.googleapis.com/auth/drive.readonly`.
-   An _Internal_ (Workspace-only) app needs no verification. For an _External_ app in testing mode, add
-   yourself as a test user.
+| Variable               | What it is                               | Where to get it                                                                              | If it's missing                                                                    |
+| ---------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`     | Google OAuth client ID                   | Google Cloud Console ([steps below](#1-google-oauth-client))                                 | The landing page shows "GOOGLE_CLIENT_ID is not configured" and nobody can sign in |
+| `GOOGLE_CLIENT_SECRET` | Secret for the same client               | Same place, shown when the client is created                                                 | Sign-in works, but **Connect Google Drive** fails                                  |
+| `ANTHROPIC_API_KEY`    | Claude API key                           | [console.anthropic.com](https://console.anthropic.com) ([steps below](#2-anthropic-api-key)) | Every document shows **Failed**, and Ask returns an error                          |
+| `SESSION_SECRET`       | Random string that signs session cookies | Generate it: `openssl rand -base64 32`                                                       | Sign-in fails                                                                      |
+| `DATABASE_URL`         | Postgres connection string               | Your local Postgres ([FAQ](#faq-running-locally))                                            | Sign-in and every data page fail                                                   |
 
-### Environment variables
+When you run `npm run dev`, the terminal lists any of these that are missing, so check there first if
+something doesn't work.
+
+> **Not needed:** a Google _API key_, a Google service account, or Drive webhooks. Drive access goes
+> through each user's own OAuth consent, using the client ID and secret above.
+
+#### 1. Google OAuth client
+
+In [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services**, in any project you
+own (an existing Workspace project such as Lounge Frog's works):
+
+1. **Enable the Google Drive API:** Library → "Google Drive API" → **Enable**.
+2. **Set up the consent screen** (OAuth consent screen / Google Auth Platform):
+   - User type **Internal** (Google Workspace only; no verification needed) or **External**. For an
+     External app in testing mode, add your Google account under **Test users**.
+   - Under **Data access / Scopes**, add `https://www.googleapis.com/auth/drive.readonly`.
+3. **Create the client:** Credentials → **Create credentials → OAuth client ID** → application type
+   **Web application**.
+   - **Authorized JavaScript origins:** `http://localhost:3000` (plus your deployed URL, if any).
+   - **Authorized redirect URIs:** leave empty. The app uses the Google Identity Services popup, which
+     doesn't need one.
+4. Copy the **Client ID** (`…apps.googleusercontent.com`) into `GOOGLE_CLIENT_ID`, and the **Client
+   secret** (`GOCSPX-…`) into `GOOGLE_CLIENT_SECRET`. You can also reuse an existing Web client's ID and
+   secret: just add `http://localhost:3000` to its JavaScript origins.
+
+#### 2. Anthropic API key
+
+1. Sign in at [console.anthropic.com](https://console.anthropic.com) and make sure the organization has
+   credits or billing set up. Requests fail without them.
+2. **API Keys → Create Key**, then copy the `sk-ant-…` value into `ANTHROPIC_API_KEY`.
+3. Optional: set `CLAUDE_MODEL=claude-sonnet-5-5` in `.env.local` to use a cheaper model while
+   developing. The default is `claude-opus-5-5`.
+
+Each document costs one Claude request when it is first processed, and again whenever it changes or you
+click Re-extract. Each Ask question takes one to a few requests.
+
+#### 3. Session secret and database
+
+```bash
+openssl rand -base64 32          # paste the output into SESSION_SECRET
+createdb drive_doc_intel_dev     # DATABASE_URL=postgres://localhost/drive_doc_intel_dev
+```
+
+#### Example `.env.local`
+
+```bash
+DATABASE_URL=postgres://localhost/drive_doc_intel_dev
+GOOGLE_CLIENT_ID=1234567890-abc123.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxx
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxx
+SESSION_SECRET=paste-output-of-openssl-rand-base64-32
+```
+
+Restart `npm run dev` after editing `.env.local`. Never commit it: `.env*` files are git-ignored, except
+`.env.example`.
+
+### All environment variables
+
+The required ones are explained above; everything else is optional.
 
 | Variable                                    | Required | Purpose                                                               |
 | ------------------------------------------- | -------- | --------------------------------------------------------------------- |
@@ -259,17 +319,12 @@ There is no migration step. The schema is created the first time the app touches
 </details>
 
 <details>
-<summary><b>What's the minimum <code>.env.local</code>?</b></summary>
+<summary><b>Which API keys do I need, and what's the minimum <code>.env.local</code>?</b></summary>
 
-```bash
-DATABASE_URL=postgres://localhost/drive_doc_intel_dev
-GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-...
-ANTHROPIC_API_KEY=sk-ant-...
-SESSION_SECRET=any-long-random-string   # openssl rand -base64 32
-```
-
-Everything else is optional (see the table above). Restart `npm run dev` after editing it.
+You need five values: `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY` and
+`SESSION_SECRET`. Only the Google client and the Anthropic key come from external accounts. See
+[API keys and secrets](#api-keys-and-secrets) for where to get each one and an example file. If one is
+missing, `npm run dev` prints its name in the terminal at startup.
 </details>
 
 <details>
