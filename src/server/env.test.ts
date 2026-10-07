@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSignInAllowed } from "./env";
+import { isSignInAllowed, missingRequiredEnv } from "./env";
 
 describe("isSignInAllowed", () => {
   it("allows everyone when the allow-list is empty", () => {
@@ -14,5 +14,31 @@ describe("isSignInAllowed", () => {
   it("matches @domain rules", () => {
     expect(isSignInAllowed("a@loungefrog.com", ["@loungefrog.com"])).toBe(true);
     expect(isSignInAllowed("a@notloungefrog.com", ["@loungefrog.com"])).toBe(false);
+  });
+});
+
+describe("missingRequiredEnv", () => {
+  it("lists unset required variables with their purpose", () => {
+    const missing = missingRequiredEnv({
+      DATABASE_URL: "postgres://localhost/x",
+      GOOGLE_CLIENT_ID: "id",
+      SESSION_SECRET: "s",
+      ANTHROPIC_API_KEY: "",
+    } as NodeJS.ProcessEnv);
+    expect(missing).toEqual([
+      "GOOGLE_CLIENT_SECRET: Google OAuth client secret (Drive access)",
+      "ANTHROPIC_API_KEY: Claude API key (extraction and Ask)",
+    ]);
+  });
+
+  it("is empty when everything is set", () => {
+    const env = {
+      DATABASE_URL: "a",
+      GOOGLE_CLIENT_ID: "b",
+      GOOGLE_CLIENT_SECRET: "c",
+      ANTHROPIC_API_KEY: "d",
+      SESSION_SECRET: "e",
+    };
+    expect(missingRequiredEnv(env as NodeJS.ProcessEnv)).toEqual([]);
   });
 });
